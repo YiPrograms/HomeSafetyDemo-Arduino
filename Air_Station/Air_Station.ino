@@ -1,5 +1,9 @@
+
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
+
+#include <WebSocketsClient.h>
+WebSocketsClient webSocket;
 
 #define measurePin A0 //Connect dust sensor to Arduino A0 pin
 #define ledPower D1   //Connect 3 led driver pins of dust sensor to Arduino D2
@@ -14,6 +18,48 @@ float voMeasured = 0;
 float calcVoltage = 0;
 float dustDensity = 0;
 
+bool socketConnected = false;
+
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+
+  switch (type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("[WSc] Disconnected!\n");
+      socketConnected = false;
+      break;
+    case WStype_CONNECTED: {
+        Serial.printf("[WSc] Connected to url: %s\n", payload);
+        socketConnected = true;
+        // send message to server when Connected
+        //webSocket.sendTXT("Connected");
+      }
+      break;
+    case WStype_TEXT:
+      Serial.printf("[WSc] get text: %s\n", payload);
+      //char* json = (char*) payload;
+      //JsonObject& data = jsonBuffer.parseObject(json);
+
+
+      break;
+    case WStype_BIN:
+      Serial.printf("[WSc] get binary length: %u\n", length);
+      hexdump(payload, length);
+
+      // send data to server
+      // webSocket.sendBIN(payload, length);
+      break;
+    case WStype_PING:
+      // pong will be send automatically
+      Serial.printf("[WSc] get ping\n");
+      break;
+    case WStype_PONG:
+      // answer to a ping we send
+      Serial.printf("[WSc] get pong\n");
+      break;
+  }
+
+}
+
 void setup() {
   pinMode(ledPower, OUTPUT);
   pinMode(smokePin, INPUT_PULLUP);
@@ -26,6 +72,10 @@ void setup() {
     delay(500);
     Serial.println("Waiting for connection");
   }
+
+  webSocket.begin("192.168.88.253", 8080, "/airupdate");
+  webSocket.onEvent(webSocketEvent);
+  webSocket.setReconnectInterval(2000);
 }
 
 int avg = 0;
@@ -33,11 +83,16 @@ int avg = 0;
 bool badAir = false;
 bool smoke = false;
 
+long long lastUpdate = 0;
+int times = 0;
+
 void loop() {
   avg = 0;
-  smoke=false;
-  for (int i = 0; i < 6; i++) {
+  smoke = false;
+
+    webSocket.loop();
     
+  if (millis() - lastUpdate > 1200) {
     digitalWrite(ledPower, LOW); // power on the LED
     delayMicroseconds(samplingTime);
 
@@ -64,30 +119,35 @@ void loop() {
     Serial.print(" - Dust Density: ");
     Serial.print(dustDensity * 1000);
     Serial.println(" ug/m3 ");
-    delay(700);
-    if (dustDensity < 0) {
-      i--;
-      continue;
-    }
+    if (dustDensity < 0) times--;
     avg += dustDensity * 1000;
-  }
-  avg /= 6;
-  Serial.print("Final:");
-  Serial.println(avg);
-  if (digitalRead(badAirPin)==LOW) avg = 3000;
-  if (digitalRead(smokePin)==LOW) smoke = true;
-    
-    String smokestr = smoke? "true": "false";
-    
-    String json = "{\"PM25\":" + String((int)avg) + ", \"Smoke\":" + smokestr + "}";
-Serial.println(json);
-  HTTPClient http; //Declare object of class HTTPClient
-  http.begin("http://192.168.88.100:8080/airupdate"); //Specify request destination
-  http.addHeader("Content-Type", "application/json"); //Specify content-type header
 
-    int httpCode = http.POST(json); //Send the request
-    String payload = http.getString(); //Get the response payload
-    Serial.println(httpCode); //Print HTTP return code
-    Serial.println(payload); //Print request response payload
-    http.end(); //Close connection
+    times++;
+    lastUpdate = millis();
+    if (times >= 6) {
+      times = 0;
+      avg /= 6;
+      Serial.print("Final:");
+      Serial.println(avg);
+      if (digitalRead(badAirPin) == LOW) avg = 3000;
+      if (digitalRead(smokePin) == LOW) smoke = true;
+
+      String smokestr = smoke ? "true" : "false";
+      String json = "{\"PM25\":" + String((int)avg) + ", \"Smoke\":" + smokestr + "}";
+      Serial.println(json);
+      webSocket.sendTXT(json);
+    }
+  }
+
+
+  /*
+    HTTPClient http; //Declare object of class HTTPClient
+    http.begin("http://192.168.88.253:8080/airupdate"); //Specify request destination
+    http.addHeader("Content-Type", "application/json"); //Specify content-type header
+
+      int httpCode = http.POST(json); //Send the request
+      String payload = http.getString(); //Get the response payload
+      Serial.println(httpCode); //Print HTTP return code
+      Serial.println(payload); //Print request response payload
+      http.end(); //Close connection*/
 }

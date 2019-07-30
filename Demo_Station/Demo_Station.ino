@@ -7,8 +7,9 @@
 #include <XPT2046_Touchscreen.h>
 
 #include <WebSocketsClient.h>
+WebSocketsClient webSocket;
 
-const String stationID = "1";
+const String stationID = "2";
 
 // Additional UI functions
 #include "GfxUi.h"
@@ -32,6 +33,9 @@ const String stationID = "1";
 // check settings.h for adapting to your needs
 #include "settings.h"
 #include <JsonListener.h>
+#include <ArduinoJson.h>
+//StaticJsonBuffer<200> jsonBuffer;
+
 #include "OpenWeatherMapCurrent.h"
 #include "OpenWeatherMapForecast.h"
 #include "TimeClient.h"
@@ -201,6 +205,47 @@ Lunar SolarToLunar(int sday, int smonth, int syear) {
     return lunar;
 }
 
+bool socketConnected = false;
+
+void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
+
+    switch(type) {
+        case WStype_DISCONNECTED:
+            Serial.printf("[WSc] Disconnected!\n");
+            socketConnected=false;
+            break;
+        case WStype_CONNECTED: {
+            Serial.printf("[WSc] Connected to url: %s\n", payload);
+            socketConnected=true;
+            // send message to server when Connected
+            //webSocket.sendTXT("Connected");
+        }
+            break;
+        case WStype_TEXT:
+            Serial.printf("[WSc] get text: %s\n", payload);
+            //char* json = (char*) payload;
+            //JsonObject& data = jsonBuffer.parseObject(json);
+
+            
+            break;
+        case WStype_BIN:
+            Serial.printf("[WSc] get binary length: %u\n", length);
+            hexdump(payload, length);
+
+            // send data to server
+            // webSocket.sendBIN(payload, length);
+            break;
+        case WStype_PING:
+            // pong will be send automatically
+            Serial.printf("[WSc] get ping\n");
+            break;
+        case WStype_PONG:
+            // answer to a ping we send
+            Serial.printf("[WSc] get pong\n");
+            break;
+    }
+
+}
 
 
 //WiFiManager
@@ -256,42 +301,18 @@ void setup() {
 
   // load the weather information
   updateData();
+
+  
+  webSocket.begin("192.168.88.253", 8080, "/stationupdate?id="+stationID);
+  webSocket.onEvent(webSocketEvent);
+  webSocket.setReconnectInterval(2000);
 }
 
 long lastDrew = 0;
 void loop() {
-  if (USE_TOUCHSCREEN_WAKE) {     // determine in settings.h!
-    
-    // for AWAKE_TIME seconds we'll hang out and wait for OTA updates
-    for (uint16_t i=0; i<AWAKE_TIME; i++  ) {
-      // Handle OTA update requests
-      ArduinoOTA.handle();
-      delay(10000);
-      yield();
-    }
-
-    // turn off the display and wait for a touch!
-    // flush the touch buffer
-//    while (spitouch.bufferSize() != 0) {
-//      spitouch.getPoint();
-//      Serial.print('.');
-//      yield();
-//    }
-    
-    Serial.println("Zzzz");
-    digitalWrite(BL_LED,LOW);// backlight off  
-
-    Serial.println("Touch detected!");
-  
-    // wipe screen & backlight on
-    tft.fillScreen(ILI9341_BLACK);
-    digitalWrite(BL_LED,HIGH); // backlight on
-    updateData();
-  } 
-  else // "standard setup"
-  {
     // Handle OTA update requests
     ArduinoOTA.handle();
+    webSocket.loop();
 
     // Check if we should update the clock
     if (millis() - lastDrew > 2500 /*&& wunderground.getSeconds() == "00"*/) {
@@ -305,7 +326,6 @@ void loop() {
       updateData();
       lastDownloadUpdate = millis();
     }
-  }
 }
 
 // Called if WiFi has not been configured yet
@@ -433,9 +453,6 @@ void drawTime() {
   gt=gmtime(&Ftime);
   int syear=gt->tm_year, smonth=gt->tm_mon, sday=gt->tm_mday;
   Lunar lun=SolarToLunar(sday,smonth+1,syear+1900);
-  Serial.println(lun.lunarDay);
-  Serial.println(lun.lunarMonth);
-  Serial.println(lun.lunarYear);
   String Luns=int2str(lun.lunarMonth)+"/"+int2str(lun.lunarDay);
   if (Dte != lastDate) {
     ui.drawString(155, 20, Dte);
@@ -520,10 +537,10 @@ void drawLocalTH()
   String percent = "%";
   String temp = String((int)t) + degC;
   String hum = String((int)h) + percent;
-  String local ="Local";
+  //String local ="Local";
   ui.setTextColor(ILI9341_CYAN, ILI9341_BLACK);
   tft.setFont(&ArialRoundedMTBold_14);
-  ui.drawString(280, 150, local);
+  //ui.drawString(280, 150, local);
   tft.setFont(&ArialRoundedMTBold_36);
   if (temp != lastTemp) {
     ui.drawString(280, 185, temp);
@@ -535,10 +552,14 @@ void drawLocalTH()
   }
   // drawSeparator(300);
 
+    if (socketConnected) {
+        String json = "{\"Temp\":" + String((int)t) + ", \"Humid\":" + String((int)h) + "}";
+        Serial.println(json);
+        webSocket.sendTXT(json);
+    }
 
-    String json = "{\"Temp\":" + String((int)t) + ", \"Humid\":" + String((int)h) + "}";
-    Serial.println(json);
     
+    /*
     HTTPClient http; //Declare object of class HTTPClient
     http.begin("http://192.168.88.100:8080/stationupdate?id=" + stationID); //Specify request destination
     http.addHeader("Content-Type", "application/json"); //Specify content-type header
@@ -547,7 +568,7 @@ void drawLocalTH()
     String payload = http.getString(); //Get the response payload
     Serial.println(httpCode); //Print HTTP return code
     Serial.println(payload); //Print request response payload
-    http.end(); //Close connection
+    http.end(); //Close connection*/
 }
 
 float JDN(int Y, int M, int D)
