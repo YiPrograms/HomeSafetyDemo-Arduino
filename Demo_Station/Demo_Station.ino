@@ -9,7 +9,7 @@
 #include <WebSocketsClient.h>
 WebSocketsClient webSocket;
 
-const String stationID = "2";
+const String stationID = "1";
 
 // Additional UI functions
 #include "GfxUi.h"
@@ -53,6 +53,7 @@ DHTesp dht;
 #define TS_MINY 250
 #define TS_MAXX 3800
 #define TS_MAXY 3900
+#define SPK_PIN D1
 
 XPT2046_Touchscreen spitouch(TOUCH_CS_PIN,TOUCH_IRQ_PIN);
 
@@ -206,6 +207,13 @@ Lunar SolarToLunar(int sday, int smonth, int syear) {
 }
 
 bool socketConnected = false;
+StaticJsonDocument<100> doc;
+
+int lastPM25 = 0;
+int PM25 = 0;
+bool Smoke;
+bool inAlert;
+char* json;
 
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 
@@ -223,8 +231,31 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
             break;
         case WStype_TEXT:
             Serial.printf("[WSc] get text: %s\n", payload);
-            //char* json = (char*) payload;
-            //JsonObject& data = jsonBuffer.parseObject(json);
+            json = (char*) payload;
+            deserializeJson(doc, json);
+            PM25 = doc["PM25"];
+            Smoke = doc["Smoke"];
+            if (Smoke) {
+                ui.setTextColor(ILI9341_YELLOW, ILI9341_RED);
+                tft.setFont(&ArialRoundedMTBold_36);
+                ui.drawString(150, 130, "WARNING");
+                ui.drawString(150, 170, "SMOKE");
+                inAlert = true;
+            } else {
+                if (inAlert) {
+                    inAlert = false;
+                    updateData();
+                }
+            }
+            if (PM25 != lastPM25) {
+                ui.setTextColor(ILI9341_ORANGE, ILI9341_BLACK);
+                tft.setFont(&ArialRoundedMTBold_36);
+                tft.fillRoundRect(260, 100, 80, 48, 0, ILI9341_BLACK);
+                ui.drawString(280, 135, String(PM25));
+                tft.setFont(&ArialRoundedMTBold_14);
+                ui.drawString(295, 150, "ug/m3");
+                lastPM25 = PM25;
+            }
 
             
             break;
@@ -256,6 +287,7 @@ void setup() {
   dht.setup(DHTPIN, DHTesp::DHTTYPE); // Connect DHT sensor 
   Serial.begin(115200);
   pinMode(BL_LED,OUTPUT); //BackLight
+  pinMode(SPK_PIN,OUTPUT);
   if (! spitouch.begin()) {
     Serial.println("TouchSensor not found?");
   }
@@ -303,11 +335,12 @@ void setup() {
   updateData();
 
   
-  webSocket.begin("192.168.88.253", 8080, "/stationupdate?id="+stationID);
+  webSocket.begin("192.168.88.100", 8080, "/stationupdate?id="+stationID);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(2000);
 }
 
+long lastBeep = 0;
 long lastDrew = 0;
 void loop() {
     // Handle OTA update requests
@@ -325,6 +358,11 @@ void loop() {
     if (millis() - lastDownloadUpdate > 1000 * UPDATE_INTERVAL_SECS) {
       updateData();
       lastDownloadUpdate = millis();
+    }
+
+    if (inAlert && millis() - lastBeep > 500) {
+        tone(D1, 1661,80);
+        lastBeep = millis();
     }
 }
 
@@ -456,7 +494,7 @@ void drawTime() {
   String Luns=int2str(lun.lunarMonth)+"/"+int2str(lun.lunarDay);
   if (Dte != lastDate) {
     ui.drawString(155, 20, Dte);
-    ui.drawString(30, 20, " Lunar: "+Luns);
+    ui.drawString(40, 20, " Lunar: "+Luns);
     lastDate = Dte;
   }
   

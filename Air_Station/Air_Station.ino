@@ -73,7 +73,7 @@ void setup() {
     Serial.println("Waiting for connection");
   }
 
-  webSocket.begin("192.168.88.253", 8080, "/airupdate");
+  webSocket.begin("192.168.88.100", 8080, "/airupdate");
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(2000);
 }
@@ -124,9 +124,9 @@ void loop() {
 
     times++;
     lastUpdate = millis();
-    if (times >= 6) {
+    if (times >= 4) {
       times = 0;
-      avg /= 6;
+      avg /= 4;
       Serial.print("Final:");
       Serial.println(avg);
       if (digitalRead(badAirPin) == LOW) avg = 3000;
